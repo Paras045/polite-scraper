@@ -1,0 +1,26 @@
+{
+  "name": "scraper",
+  "version": "1.0.0",
+  "description": "- **Target:** https://books.toscrape.com/\r - **Purpose:** Practice HTML scraping on a fictional bookstore built for this purpose.\r - **Scope:** First three catalogue pages only; expected 60 unique book URLs.\r - **Data:** Title, product URL, price, availability, rating, description, source page, and fetch timestamp.\r - **Robots check:** Request to https://books.toscrape.com/robots.txt timed out after 10 seconds. Directives remain unverified.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node src/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Paras045/polite-scraper.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Paras045/polite-scraper/issues"
+  },
+  "homepage": "https://github.com/Paras045/polite-scraper#readme",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "zod": "^4.6.7"
+  }
+}
