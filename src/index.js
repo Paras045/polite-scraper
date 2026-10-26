@@ -4,6 +4,7 @@ import * as cheerio from 'cheerio';
 
 const BASE_URL = 'https://books.toscrape.com/';
 const CACHE_DIR = path.resolve('cache');
+const OUTPUT_DIR = path.resolve('output');
 const TIMEOUT_MS = 10_000;
 const MIN_DELAY_MS = 500;
 
@@ -20,17 +21,18 @@ async function fetchHtml(url, cacheFile) {
   try {
     const html = await readFile(cacheFile, 'utf8');
     cacheHits++;
+
     console.log(
       `CACHE HIT ${path.basename(cacheFile)} bytes=${Buffer.byteLength(html, 'utf8')}`,
     );
+
     return html;
   } catch (error) {
-    if (error.code !== 'ENOENT') {
-      throw error;
-    }
+    if (error.code !== 'ENOENT') throw error;
   }
 
   const elapsed = Date.now() - lastNetworkRequestAt;
+
   if (lastNetworkRequestAt !== 0 && elapsed < MIN_DELAY_MS) {
     await new Promise((resolve) =>
       setTimeout(resolve, MIN_DELAY_MS - elapsed),
@@ -49,58 +51,111 @@ async function fetchHtml(url, cacheFile) {
   }
 
   const html = await response.text();
+
   await writeFile(cacheFile, html, 'utf8');
   pagesFetched++;
 
   console.log(
     `FETCH status=${response.status} ${path.basename(cacheFile)} bytes=${Buffer.byteLength(html, 'utf8')}`,
   );
+
   return html;
 }
 
+function extractBookDetails(html, productUrl, sourcePage) {
+  const $ = cheerio.load(html);
+
+  const title = $('div.product_main h1').first().text().trim();
+  const priceText = $('p.price_color').first().text().trim();
+  const availabilityText = $('div.product_main p.availability')
+    .first()
+    .text()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const ratingClass = $('div.product_main p.star-rating')
+    .first()
+    .attr('class');
+
+  const ratingText =
+    ratingClass?.split(/\s+/).find((value) => value !== 'star-rating') ?? null;
+
+    const descriptionElement = $('#product_description')
+    .nextAll('p')
+    .first();
+
+    const description = descriptionElement.length
+    ? descriptionElement.text().trim()
+    : null;
+
+  return {
+    title,
+    product_url: productUrl,
+    price_text: priceText,
+    availability_text: availabilityText,
+    rating_text: ratingText,
+    description,
+    source_page: sourcePage,
+    fetched_at: new Date().toISOString(),
+  };
+}
+
 async function main() {
-  const bookUrls = new Set();
-  let pageUrl = BASE_URL;
-  let cataloguePages = 0;
+  const urlsFile = path.join(CACHE_DIR, 'book-urls.json');
+  const urls = JSON.parse(await readFile(urlsFile, 'utf8'));
 
-  while (pageUrl && cataloguePages < 3) {
-    const cacheFile = path.join(
-      CACHE_DIR,
-      `catalogue-page-${cataloguePages + 1}.html`,
-    );
-
-    const html = await fetchHtml(pageUrl, cacheFile);
-    const $ = cheerio.load(html);
-
-    cataloguePages++;
-
-    $('article.product_pod h3 a').each((_, element) => {
-      const href = $(element).attr('href');
-      if (href) {
-        bookUrls.add(new URL(href, pageUrl).href);
-      }
-    });
-
-    const nextHref = $('li.next a').attr('href');
-    pageUrl = nextHref ? new URL(nextHref, pageUrl).href : null;
+  if (!Array.isArray(urls) || urls.length === 0) {
+    throw new Error('No book URLs found in cache/book-urls.json');
   }
 
-  const urls = [...bookUrls];
+  await mkdir(OUTPUT_DIR, { recursive: true });
 
-  await mkdir(CACHE_DIR, { recursive: true });
+  const records = [];
+  const failures = [];
+
+  for (let index = 0; index < urls.length; index++) {
+    const productUrl = urls[index];
+    const filename = `book-${String(index + 1).padStart(3, '0')}.html`;
+    const cacheFile = path.join(CACHE_DIR, 'books', filename);
+
+    // Catalogue pages 1–3 are traversed in order; retain the originating page.
+    const sourcePage = `${BASE_URL}catalogue/page-${Math.floor(index / 20) + 1}.html`;
+
+    try {
+      const html = await fetchHtml(productUrl, cacheFile);
+      const record = extractBookDetails(html, productUrl, sourcePage);
+
+      records.push(record);
+      console.log(`EXTRACTED ${index + 1}/${urls.length}: ${record.title || '(missing title)'}`);
+    } catch (error) {
+      failures.push({
+        product_url: productUrl,
+        reason: error.message,
+      });
+
+      console.error(`FAILED ${productUrl}: ${error.message}`);
+    }
+  }
+
   await writeFile(
-    path.join(CACHE_DIR, 'book-urls.json'),
-    JSON.stringify(urls, null, 2),
+    path.join(OUTPUT_DIR, 'raw-books.json'),
+    JSON.stringify(records, null, 2),
     'utf8',
   );
 
-  console.log('\n--- Stage 2 checkpoint ---');
-  console.log(`catalogue_pages=${cataloguePages}`);
-  console.log(`discovered=${urls.length}`);
-  console.log(`unique_urls=${new Set(urls).size}`);
+  await writeFile(
+    path.join(OUTPUT_DIR, 'stage3-errors.json'),
+    JSON.stringify(failures, null, 2),
+    'utf8',
+  );
+
+  console.log('\n--- Stage 3 checkpoint ---');
+  console.log(`discovered_urls=${urls.length}`);
+  console.log(`records_extracted=${records.length}`);
+  console.log(`failed_pages=${failures.length}`);
   console.log(`pages_fetched=${pagesFetched}`);
   console.log(`cache_hits=${cacheHits}`);
-  console.log('Saved URL list to cache/book-urls.json');
+  console.log(`saved=${path.join(OUTPUT_DIR, 'raw-books.json')}`);
 }
 
 main().catch((error) => {
